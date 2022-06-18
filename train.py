@@ -164,13 +164,15 @@ class YOLOModule(pl.LightningModule):
         x, y = batch
         y_pred = self(x)
 
-        # center_x - i * cell_size, center_y - j * cell_size, box_w, box_h = 
-
-
-        loss = F.cross_entropy(y_pred.transpose(1, 2), y)
+        (loss_coords, loss_dims, loss_obj, loss_noobj, loss_labels) = self.loss(y_pred, y)
+        self.log("train_loss_coords", loss_coords.item())
+        self.log("train_loss_dims", loss_dims.item())
+        self.log("train_loss_obj", loss_obj.item())
+        self.log("train_loss_noobj", loss_noobj.item())
+        self.log("train_loss_labels", loss_labels.item())
+        loss = loss_coords + loss_dims + loss_obj + loss_noobj + loss_labels
         self.log("train_loss", loss.item())
         return loss
-
 
 
     def configure_optimizers(self):
@@ -179,8 +181,8 @@ class YOLOModule(pl.LightningModule):
 
 
 if __name__ == "__main__":
-    module = YOLOModule()
-    for idx, (x, y) in zip(range(3), module.train_dataloader()):
-        print(x.shape, y.shape)
-        y_pred = module(x)
-        print(y_pred.shape, y[y[..., 4] == 1].shape)
+    # module = YOLOModule()
+    # for idx, (x, y) in zip(range(3), module.train_dataloader()):
+    #     print(x.shape, y.shape)
+    #     y_pred = module(x)
+    #     print(y_pred.shape, y[y[..., 4] == 1].shape)
