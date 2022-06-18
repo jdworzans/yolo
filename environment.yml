@@ -8,3 +8,5 @@ dependencies:
   - python==3.9
   - pytorch=1.11.0=py3.9_cuda11.5_cudnn8.3.2_0
   - pytorch-lightning
+  - torchvision
+  - scipy
