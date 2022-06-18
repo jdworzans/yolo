@@ -1,15 +1,16 @@
 from collections import defaultdict
 from math import floor
-from turtle import forward
+import torch.nn.functional as F
 
 import pytorch_lightning as pl
 import torch
-from torch import nn
+from torch import nn, unsqueeze
 from torch.utils.data import DataLoader
 from torchvision import transforms
 from torchvision.datasets import VOCDetection
 
 from model import YOLO
+
 
 TARGET_SIZE = (448, 448)
 NAME_TO_ID = {
@@ -90,6 +91,48 @@ class YOLOLoss(nn.Module):
         self.lambda_coord = lambda_coord
         self.lambda_noobj = lambda_noobj
 
+    def forward(self, preds, targets):
+        coord_mask = (targets[..., 4] == 1)
+        noobj_mask = (targets[..., 4] == 0)
+
+        coord_preds = preds[coord_mask][..., :5*self.B].reshape(-1, self.B, 5) # (n_coord, B, 5)
+        coord_targets = targets[coord_mask][..., :5*self.B].reshape(-1, self.B, 5)  # (n_coord, B, 5)
+        preds_xy = torch.cat(
+            (
+                coord_preds[..., :2] / self.S - 0.5 * coord_preds[..., 2:4],
+                coord_preds[..., :2] / self.S + 0.5 * coord_preds[..., 2:4],
+            ), -1
+        )
+        targets_xy = torch.cat(
+            (
+                coord_targets[..., :2] / self.S - 0.5 * coord_targets[..., 2:4],
+                coord_targets[..., :2] / self.S + 0.5 * coord_targets[..., 2:4],
+            ), -1
+        )
+        iou = IoU(*torch.broadcast_tensors(targets_xy.unsqueeze(-3), preds_xy.unsqueeze(-2)))
+        max_iou, max_idxs = iou.max(-2)
+        coord_response_preds = torch.gather(coord_preds, 1, max_idxs.unsqueeze(-1).expand_as(coord_preds))
+
+        # Part 1
+        loss_coords = F.mse_loss(coord_response_preds[..., :2], coord_targets[..., :2], reduction="sum")
+
+        # Part 2
+        loss_dims = F.mse_loss(torch.sqrt(coord_response_preds[..., 2:4]), torch.sqrt(coord_targets[..., 2:4]), reduction="sum")
+
+        # Part 3
+        loss_obj = F.mse_loss(coord_response_preds[..., 4], max_iou, reduction="sum")
+
+        # Part 4
+        noobj_preds = preds[noobj_mask]
+        loss_noobj = noobj_preds[..., 4:self.B*5:5].square().sum()
+
+        # Part 5
+        label_preds = coord_preds[..., 5*self.B:]
+        label_targets = coord_targets[..., 5*self.B:]
+        loss_labels = F.mse_loss(label_preds, label_targets, loss="sum")
+
+        return (self.lambda_coord * loss_coords, self.lambda_coord * loss_dims, loss_obj, self.lambda_noobj * loss_noobj, loss_labels)
+
 
 class YOLOModule(pl.LightningModule):
     def __init__(self, batch_size: int = 16) -> None:
@@ -108,6 +151,7 @@ class YOLOModule(pl.LightningModule):
             target_transform=VOCTargetTransform(),
         )
         self.model = YOLO()
+        self.loss = YOLOLoss()
 
 
     def train_dataloader(self):
@@ -120,11 +164,14 @@ class YOLOModule(pl.LightningModule):
         x, y = batch
         y_pred = self(x)
 
-        coord_mask = y[..., 4] > 0
+        # center_x - i * cell_size, center_y - j * cell_size, box_w, box_h = 
+
 
         loss = F.cross_entropy(y_pred.transpose(1, 2), y)
         self.log("train_loss", loss.item())
         return loss
+
+
 
     def configure_optimizers(self):
         optimizer = torch.optim.Adam(self.parameters(), lr=1e-3)
@@ -135,4 +182,5 @@ if __name__ == "__main__":
     module = YOLOModule()
     for idx, (x, y) in zip(range(3), module.train_dataloader()):
         print(x.shape, y.shape)
-        print(module(x).shape)
+        y_pred = module(x)
+        print(y_pred.shape, y[y[..., 4] == 1].shape)
