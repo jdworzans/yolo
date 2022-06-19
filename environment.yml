@@ -10,3 +10,4 @@ dependencies:
   - pytorch-lightning
   - torchvision
   - scipy
+  - tensorboard

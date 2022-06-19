@@ -1,16 +1,17 @@
 from collections import defaultdict
 from math import floor
-import torch.nn.functional as F
 
 import pytorch_lightning as pl
 import torch
-from torch import nn, unsqueeze
+import torch.nn.functional as F
+from pytorch_lightning.callbacks import ModelCheckpoint
+from pytorch_lightning.utilities.cli import LightningCLI
+from torch import nn
 from torch.utils.data import DataLoader
 from torchvision import transforms
 from torchvision.datasets import VOCDetection
 
 from model import YOLO
-
 
 TARGET_SIZE = (448, 448)
 NAME_TO_ID = {
@@ -78,7 +79,7 @@ def IoU(box1, box2):
     upper = torch.min(box1[..., 2:], box2[..., 2:])
     intersection = (upper - lower).clamp(min=0).prod(-1)
     union = area(box1) + area(box2) - intersection
-    return intersection / union
+    return intersection / (union + 1e-6)
 
 
 class YOLOLoss(nn.Module):
@@ -127,9 +128,9 @@ class YOLOLoss(nn.Module):
         loss_noobj = noobj_preds[..., 4:self.B*5:5].square().sum()
 
         # Part 5
-        label_preds = coord_preds[..., 5*self.B:]
-        label_targets = coord_targets[..., 5*self.B:]
-        loss_labels = F.mse_loss(label_preds, label_targets, loss="sum")
+        label_preds = preds[coord_mask][..., 5*self.B:]
+        label_targets = targets[coord_mask][..., 5*self.B:]
+        loss_labels = F.mse_loss(label_preds, label_targets, reduction="sum")
 
         return (self.lambda_coord * loss_coords, self.lambda_coord * loss_dims, loss_obj, self.lambda_noobj * loss_noobj, loss_labels)
 
@@ -176,7 +177,7 @@ class YOLOModule(pl.LightningModule):
 
 
     def configure_optimizers(self):
-        optimizer = torch.optim.Adam(self.parameters(), lr=1e-3)
+        optimizer = torch.optim.Adam(self.parameters(), lr=1e-5)
         return optimizer
 
 
@@ -186,3 +187,18 @@ if __name__ == "__main__":
     #     print(x.shape, y.shape)
     #     y_pred = module(x)
     #     print(y_pred.shape, y[y[..., 4] == 1].shape)
+
+    checkpoint_callback = ModelCheckpoint(
+        monitor="train_loss",
+        dirpath="model_checkpoints/",
+        filename="model-{epoch:02d}-{train_loss:.2f}",
+        save_top_k=-1,
+        mode="min",
+    )
+
+    cli = LightningCLI(
+        YOLOModule,
+        trainer_defaults={'gpus': 1, 'callbacks': [checkpoint_callback]},
+        seed_everything_default=1234,
+        save_config_overwrite=True
+    )

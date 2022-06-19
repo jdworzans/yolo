@@ -81,7 +81,10 @@ class YOLO(nn.Module):
         )
 
     def forward(self, x):
-        return self.fc(self.final_conv(self.initial_conv(x))).view(-1, self.S, self.S, 5 * self.B + self.C)
+        out = self.initial_conv(x)
+        out = self.final_conv(out)
+        out = self.fc(out)
+        return out.view(-1, self.S, self.S, 5 * self.B + self.C)
 
 if __name__ == "__main__":
     example = torch.randn(10, 3, 448, 448)
