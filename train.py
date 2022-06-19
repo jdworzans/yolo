@@ -173,7 +173,7 @@ class YOLOModule(pl.LightningModule):
         self.log("train_loss_labels", loss_labels.item())
         loss = loss_coords + loss_dims + loss_obj + loss_noobj + loss_labels
         self.log("train_loss", loss.item())
-        return loss
+        return loss / x.size(0)
 
 
     def configure_optimizers(self):
