@@ -1,1 +1,5 @@
 data
+lightning_logs
+model_checkpoints
+.vscode
+__pycache__
